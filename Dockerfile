@@ -33,7 +33,7 @@ ENV NODE_ENV=production \
     PORT=3000 \
     DATABASE_URL="file:/app/data/db.sqlite"
 
-RUN apk add --no-cache openssl \
+RUN apk add --no-cache openssl su-exec \
     && addgroup -S appgroup \
     && adduser -S appuser -G appgroup \
     && mkdir -p /app/data /app/prisma /app/web/dist \
@@ -46,7 +46,7 @@ COPY --from=serverbuild --chown=appuser:appgroup /server/scripts ./scripts
 COPY --from=serverbuild --chown=appuser:appgroup /server/prisma ./prisma
 COPY --from=webbuild --chown=appuser:appgroup /web/dist ./web/dist
 
-USER appuser
+RUN chmod +x ./scripts/docker-entrypoint.sh
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
   CMD node -e "require('http').get('http://127.0.0.1:' + (process.env.PORT || 3000) + '/', (res) => process.exit(res.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"
@@ -54,4 +54,5 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
 EXPOSE 3000
 VOLUME ["/app/data"]
 
+ENTRYPOINT ["./scripts/docker-entrypoint.sh"]
 CMD ["node", "scripts/start.js"]

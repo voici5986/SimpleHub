@@ -81,6 +81,8 @@ docker run -d \
   ghcr.io/jwy87/SimpleHub:latest
 ```
 
+> 💡 容器内 SQLite 默认写入 `/app/data/db.sqlite`。当前镜像会在启动时自动修正 `/app/data` 挂载卷权限，适配 1Panel / Docker 命名卷场景，避免出现 `attempt to write a readonly database`。
+
 **2. 自定义管理员账号（推荐）**
 
 ```bash
@@ -131,6 +133,8 @@ services:
 volumes:
   api-monitor-data:
 ```
+
+> 💡 如果你使用的是旧镜像并在 1Panel 中遇到 SQLite 只读报错，请先升级到包含该权限修复的镜像版本后再重新创建容器。
 
 **2. 启动服务**
 
