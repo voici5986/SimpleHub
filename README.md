@@ -224,13 +224,13 @@ npm start
    - **站点名称**：自定义名称，便于识别
    - **接口地址**：API 的 Base URL（如 `https://api.example.com`）
    - **API 类型**：选择对应的平台类型
-   - **API 密钥**：系统访问令牌
+   - **API 密钥**：VOAPI 类型会直接作为 `Authorization` 请求头发送，不会自动追加 `Bearer`
    - **用户 ID**：NewAPI 和 Veloera 类型需要填写
 
 3. 可选配置：
    - **定时检测**：设置每日自动检测时间
    - **分类**：将站点归类到指定分类
-   - **签到配置**：Veloera 类型可启用自动签到
+   - **签到配置**：Veloera、NewAPI、VOAPI 类型可启用自动签到
    - **站点代理**：可选填写 `http(s)://` 或 `socks5://` 代理地址，自动用于该站点全部后端访问
    - **自定义余额**：配置自定义余额查询接口
 
@@ -249,7 +249,7 @@ npm start
 
 ### 签到功能
 
-1. 编辑 NewAPI、Veloera 类型的站点
+1. 编辑 NewAPI、Veloera、VOAPI 类型的站点
 2. 启用「自动签到」开关
 3. 选择检测模式：
    - **两者都检测**（推荐）：同时执行模型检测和签到
@@ -299,7 +299,7 @@ npm start
 | **NewAPI** | New API 中转站 | 自动获取用户余额 |
 | **Veloera** | Veloera 中转站 | ✅ 支持自动签到 + 余额监控 |
 | **DoneHub** | DoneHub 中转站 | 自动获取用户余额 |
-| **VOAPI** | VOAPI 中转站 | 需配置 JWT Token 获取余额 |
+| **VOAPI** | VOAPI 中转站 | 全部请求统一使用 API Key 原样鉴权 |
 | **其他** | OpenAI 标准或自定义 | 支持自定义 Billing 配置 |
 
 ---
@@ -358,9 +358,9 @@ npm start
 ### 签到功能相关
 
 <details>
-<summary><b>为什么只有 Veloera 支持签到？</b></summary>
+<summary><b>哪些类型支持签到？</b></summary>
 
-目前仅Veloera支持签到功能。
+目前 NewAPI、Veloera、VOAPI 支持签到功能。
 
 如果您使用的平台有签到接口，欢迎提交 Issue 或 PR 添加支持。
 
@@ -369,7 +369,7 @@ npm start
 <details>
 <summary><b>签到失败怎么办？</b></summary>
 
-1. 确认已正确填写用户 ID
+1. NewAPI、Veloera 先确认已正确填写用户 ID
 2. 检查 API 密钥是否有效
 3. 查看「请求详情」中的错误信息
 4. 确认站点的签到接口是否正常

@@ -1,19 +1,30 @@
 const { decrypt } = require('./crypto');
 const { siteFetch } = require('./site-http');
 
+function parseCheckInQuota(value) {
+  if (value === null || value === undefined || value === '') {
+    return null;
+  }
+
+  const quota = Number(value);
+  return Number.isFinite(quota) ? quota : null;
+}
+
 /**
- * 执行签到（支持 Veloera 和 NewAPI）
+ * 执行签到（支持 Veloera、NewAPI 和 VOAPI）
  * @param {Object} site - 站点信息
  * @returns {Object} - { success: boolean, message: string, quota: number|null, error: string|null }
  */
 async function performCheckIn(site) {
-  // 支持 Veloera 和 NewAPI 类型
-  if (site.apiType !== 'veloera' && site.apiType !== 'newapi') {
+  const supportedTypes = ['veloera', 'newapi', 'voapi'];
+
+  // 支持 Veloera、NewAPI 和 VOAPI 类型
+  if (!supportedTypes.includes(site.apiType)) {
     return {
       success: false,
       message: '不支持的站点类型',
       quota: null,
-      error: '仅Veloera和NewAPI类型支持签到'
+      error: '仅 Veloera、NewAPI 和 VOAPI 类型支持签到'
     };
   }
 
@@ -27,8 +38,8 @@ async function performCheckIn(site) {
     };
   }
 
-  // 检查必要参数
-  if (!site.userId) {
+  // NewAPI 和 Veloera 需要额外的用户 ID
+  if ((site.apiType === 'newapi' || site.apiType === 'veloera') && !site.userId) {
     return {
       success: false,
       message: '缺少用户ID',
@@ -41,27 +52,35 @@ async function performCheckIn(site) {
     // 解密API Key
     const token = decrypt(site.apiKeyEnc);
     
-    // 构建签到URL（NewAPI 和 Veloera 端点不同）
+    // 构建签到URL（不同站点类型端点不同）
     const baseUrl = site.baseUrl.replace(/\/+$/, ''); // 移除末尾斜杠
-    const checkInUrl = site.apiType === 'newapi' 
+    const checkInUrl = site.apiType === 'newapi'
       ? `${baseUrl}/api/user/checkin`
-      : `${baseUrl}/api/user/check_in`;
-    
-    // 构建请求头（NewAPI 和 Veloera 使用不同的用户ID头）
-    const userHeader = site.apiType === 'newapi' ? 'new-api-user' : 'veloera-user';
+      : site.apiType === 'voapi'
+        ? `${baseUrl}/api/check_in`
+        : `${baseUrl}/api/user/check_in`;
+
+    // 构建请求头
+    const headers = site.apiType === 'voapi'
+      ? {
+          'Authorization': token,
+          'Accept': 'application/json, text/plain, */*',
+          'Cache-Control': 'no-store'
+        }
+      : {
+          'Authorization': `Bearer ${token}`,
+          [site.apiType === 'newapi' ? 'new-api-user' : 'veloera-user']: site.userId,
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'Cache-Control': 'no-store'
+        };
     
     console.log(`[签到] 开始签到: ${site.name} (${checkInUrl})`);
     
     // 发起签到请求
     const response = await siteFetch(site, checkInUrl, {
       method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        [userHeader]: site.userId,
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-        'Cache-Control': 'no-store'
-      },
+      headers,
       timeout: 15000 // 15秒超时
     });
 
@@ -81,7 +100,19 @@ async function performCheckIn(site) {
     }
 
     // 检查签到结果
-    if (result.success) {
+    if (site.apiType === 'voapi' && result.code === 0) {
+      const quota = parseCheckInQuota(result.data?.amount);
+      const message = result.message || result.msg || '签到成功';
+      console.log(`[签到] ✅ ${site.name} - ${message}, 获得额度: ${quota}`);
+      return {
+        success: true,
+        message,
+        quota,
+        error: null
+      };
+    }
+
+    if (site.apiType !== 'voapi' && result.success) {
       const quota = result.data?.quota || null;
       const message = result.message || '签到成功';
       console.log(`[签到] ✅ ${site.name} - ${message}, 获得额度: ${quota}`);
@@ -91,17 +122,19 @@ async function performCheckIn(site) {
         quota,
         error: null
       };
-    } else {
-      const errorMsg = result.message || result.error || '签到失败';
-      console.log(`[签到] ❌ ${site.name} - ${errorMsg}`);
-      return {
-        success: false,
-        message: errorMsg,
-        quota: null,
-        error: errorMsg
-      };
     }
 
+    const errorMsg = result.message
+      || result.msg
+      || result.error
+      || (site.apiType === 'voapi' && result.code !== undefined ? `签到失败（code: ${result.code}）` : '签到失败');
+    console.log(`[签到] ❌ ${site.name} - ${errorMsg}`);
+    return {
+      success: false,
+      message: errorMsg,
+      quota: null,
+      error: errorMsg
+    };
   } catch (error) {
     console.error(`[签到] 异常: ${site.name}`, error.message);
     return {
@@ -120,8 +153,8 @@ async function performCheckIn(site) {
  * @returns {boolean}
  */
 function shouldCheckIn(site, isManual = false) {
-  // 支持 Veloera 和 NewAPI 类型
-  const supportedTypes = ['veloera', 'newapi'];
+  // 支持 Veloera、NewAPI 和 VOAPI 类型
+  const supportedTypes = ['veloera', 'newapi', 'voapi'];
   
   // 手动触发时，只要启用了签到就执行
   if (isManual) {

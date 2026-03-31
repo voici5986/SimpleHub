@@ -149,6 +149,98 @@ function createVoapiTokenServer() {
         return;
       }
 
+      if (url.pathname === '/api/keys' && req.method === 'POST') {
+        res.end(JSON.stringify({ code: 0, message: 'ok' }));
+        return;
+      }
+
+      if (url.pathname === '/api/keys/1' && req.method === 'DELETE') {
+        res.end(JSON.stringify({ code: 0, message: 'ok' }));
+        return;
+      }
+
+      res.statusCode = 404;
+      res.end(JSON.stringify({ code: 404, message: `Unhandled path: ${url.pathname}` }));
+    });
+  });
+
+  return { server, requests };
+}
+
+function createVoapiAccessServer() {
+  const requests = [];
+  const server = http.createServer((req, res) => {
+    const url = new URL(req.url, `http://${req.headers.host}`);
+    const bodyChunks = [];
+
+    req.on('data', (chunk) => bodyChunks.push(chunk));
+    req.on('end', () => {
+      const rawBody = Buffer.concat(bodyChunks).toString('utf8');
+      requests.push({
+        path: url.pathname,
+        method: req.method,
+        authorization: req.headers.authorization || '',
+        body: rawBody ? JSON.parse(rawBody) : null
+      });
+
+      res.setHeader('Content-Type', 'application/json');
+
+      if (url.pathname === '/api/check_in' && req.method === 'POST') {
+        res.end(JSON.stringify({
+          code: 0,
+          data: {
+            id: 60645,
+            created: 1774971285605,
+            updated: 1774971285605,
+            uid: 520,
+            ymd: '20260331',
+            amount: '2.85',
+            consecutiveNo: 1,
+            bonusAmount: '0'
+          }
+        }));
+        return;
+      }
+
+      if (url.pathname === '/api/user/info' && req.method === 'GET') {
+        res.end(JSON.stringify({
+          code: 0,
+          data: {
+            bindBalance: '8.50',
+            basicBalance: '1.50',
+            usedBindBalance: '2.00',
+            usedBasicBalance: '0.50',
+            ban: false
+          }
+        }));
+        return;
+      }
+
+      if (url.pathname === '/api/models' && req.method === 'GET') {
+        res.end(JSON.stringify({
+          code: 0,
+          data: {
+            models: [
+              {
+                idKey: 'gpt-4o-mini',
+                chargingType: 1,
+                inputPrice: '0.10',
+                outputPrice: '0.20',
+                ac: [1]
+              }
+            ],
+            groups: [
+              {
+                id: 1,
+                name: '默认分组',
+                ratio: 1
+              }
+            ]
+          }
+        }));
+        return;
+      }
+
       res.statusCode = 404;
       res.end(JSON.stringify({ code: 404, message: `Unhandled path: ${url.pathname}` }));
     });
@@ -638,8 +730,7 @@ test('voapi token routes normalize sk prefix for display and strip it on update'
       name: 'voapi-site',
       baseUrl: `http://127.0.0.1:${upstreamPort}`,
       apiKey: 'sk-voapi-models',
-      apiType: 'voapi',
-      billingAuthValue: 'voapi-jwt-token'
+      apiType: 'voapi'
     });
 
     const tokensResponse = await app.inject({
@@ -673,12 +764,89 @@ test('voapi token routes normalize sk prefix for display and strip it on update'
     assert.equal(updateResponse.statusCode, 200, updateResponse.body);
     assert.equal(updateResponse.json().success, true);
 
+    const createResponse = await app.inject({
+      method: 'POST',
+      url: `/api/sites/${site.id}/tokens`,
+      payload: {
+        name: 'new-token',
+        remainQuota: 500000,
+        unlimitedQuota: false,
+        expiredTime: -1,
+        groups: [2]
+      }
+    });
+
+    assert.equal(createResponse.statusCode, 200, createResponse.body);
+    assert.equal(createResponse.json().success, true);
+
+    const deleteResponse = await app.inject({
+      method: 'DELETE',
+      url: `/api/sites/${site.id}/tokens/1`
+    });
+
+    assert.equal(deleteResponse.statusCode, 200, deleteResponse.body);
+    assert.equal(deleteResponse.json().success, true);
+
     const listRequest = upstream.requests.find((request) => request.path === '/api/keys' && request.method === 'GET');
-    assert.equal(listRequest.authorization, 'voapi-jwt-token');
+    assert.equal(listRequest.authorization, 'sk-voapi-models');
+
+    const createRequest = upstream.requests.find((request) => request.path === '/api/keys' && request.method === 'POST');
+    assert.equal(createRequest.authorization, 'sk-voapi-models');
 
     const updateRequest = upstream.requests.find((request) => request.path === '/api/keys/1' && request.method === 'PUT');
-    assert.equal(updateRequest.authorization, 'voapi-jwt-token');
+    assert.equal(updateRequest.authorization, 'sk-voapi-models');
     assert.equal(updateRequest.body.token, '60Wy9oMtcZGCk1jXja0IH8PzqUgvS9moQASE7iM3CjNU6WSt');
+
+    const deleteRequest = upstream.requests.find((request) => request.path === '/api/keys/1' && request.method === 'DELETE');
+    assert.equal(deleteRequest.authorization, 'sk-voapi-models');
+  } finally {
+    await new Promise((resolve) => upstream.server.close(resolve));
+  }
+});
+
+test('voapi site check, billing, pricing and check-in all use raw apiKey authorization', async () => {
+  const upstream = createVoapiAccessServer();
+  const upstreamPort = await listen(upstream.server);
+
+  try {
+    const site = await createSite({
+      name: 'voapi-access-site',
+      baseUrl: `http://127.0.0.1:${upstreamPort}`,
+      apiKey: 'voapi-access-token',
+      apiType: 'voapi',
+      enableCheckIn: true,
+      checkInMode: 'both',
+      unlimitedQuota: false
+    });
+
+    const checkResponse = await app.inject({
+      method: 'POST',
+      url: `/api/sites/${site.id}/check?skipNotification=true`
+    });
+
+    assert.equal(checkResponse.statusCode, 200, checkResponse.body);
+    assert.equal(checkResponse.json().ok, true);
+    assert.equal(checkResponse.json().checkInResult.checkInSuccess, true);
+    assert.equal(checkResponse.json().checkInResult.checkInMessage, '签到成功');
+    assert.equal(checkResponse.json().checkInResult.checkInQuota, 2.85);
+
+    const pricingResponse = await app.inject({
+      method: 'GET',
+      url: `/api/sites/${site.id}/pricing`
+    });
+
+    assert.equal(pricingResponse.statusCode, 200, pricingResponse.body);
+    assert.equal(pricingResponse.json().code, 0);
+
+    const modelsRequests = upstream.requests.filter((request) => request.path === '/api/models' && request.method === 'GET');
+    assert.ok(modelsRequests.length >= 2);
+    assert.ok(modelsRequests.every((request) => request.authorization === 'voapi-access-token'));
+
+    const checkInRequest = upstream.requests.find((request) => request.path === '/api/check_in' && request.method === 'POST');
+    assert.equal(checkInRequest.authorization, 'voapi-access-token');
+
+    const userInfoRequest = upstream.requests.find((request) => request.path === '/api/user/info' && request.method === 'GET');
+    assert.equal(userInfoRequest.authorization, 'voapi-access-token');
   } finally {
     await new Promise((resolve) => upstream.server.close(resolve));
   }

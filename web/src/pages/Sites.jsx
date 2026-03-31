@@ -681,6 +681,11 @@ export default function Sites() {
       v.excludeFromBatch = v.excludeFromBatch === true;
       v.unlimitedQuota = v.unlimitedQuota === true;
       v.enableCheckIn = v.enableCheckIn === true;
+      if (v.apiType === 'voapi') {
+        v.billingAuthValue = null
+      } else if (typeof v.billingAuthValue === 'string') {
+        v.billingAuthValue = v.billingAuthValue.trim() || null
+      }
       v.proxyUrl = v.proxyUrl?.trim() || null;
       
       const res = await fetch('/api/sites', { method: 'POST', headers: authHeaders(true), body: JSON.stringify(v) })
@@ -739,7 +744,6 @@ export default function Sites() {
         unlimitedQuota: currentSite.unlimitedQuota !== undefined ? currentSite.unlimitedQuota : false,
         billingUrl: currentSite.billingUrl || '',
         billingAuthType: currentSite.billingAuthType || 'token',
-        billingAuthValue: '',
         proxyUrl: currentSite.proxyUrl || '',
         billingLimitField: currentSite.billingLimitField || '',
         billingUsageField: currentSite.billingUsageField || '',
@@ -771,13 +775,18 @@ export default function Sites() {
         categoryId: v.categoryId || null,
         billingUrl: v.billingUrl || null,
         billingAuthType: v.billingAuthType || 'token',
-        billingAuthValue: v.billingAuthValue || null,
         proxyUrl: v.proxyUrl?.trim() || null,
         billingLimitField: v.billingLimitField || null,
         billingUsageField: v.billingUsageField || null,
         enableCheckIn: v.enableCheckIn === true,
         extralink: v.extralink || null,
         remark: v.remark || null
+      }
+
+      if (v.apiType === 'voapi') {
+        updateData.billingAuthValue = null
+      } else if (typeof v.billingAuthValue === 'string' && v.billingAuthValue.trim()) {
+        updateData.billingAuthValue = v.billingAuthValue.trim()
       }
       
       if (v.enableCheckIn && v.checkInMode) {
@@ -1194,7 +1203,7 @@ export default function Sites() {
     }
 
     let checkInDisplay = null;
-    if ((apiType === 'veloera' || apiType === 'newapi') && enableCheckIn) {
+    if ((apiType === 'veloera' || apiType === 'newapi' || apiType === 'voapi') && enableCheckIn) {
       if (checkInSuccess === true) {
         checkInDisplay = <CheckCircleOutlined style={{ color: '#52c41a', fontSize: 14 }} />;
       } else if (checkInSuccess === false) {
@@ -1469,7 +1478,7 @@ export default function Sites() {
       render: (_, record) => {
         const { apiType, enableCheckIn, checkInSuccess, checkInMessage, checkInError } = record
 
-        if (apiType !== 'veloera' && apiType !== 'newapi') {
+        if (apiType !== 'veloera' && apiType !== 'newapi' && apiType !== 'voapi') {
           return <Tooltip title="此站点类型不支持签到">
             <span style={{ fontSize: 32, color: '#d9d9d9', cursor: 'help', fontWeight: 'bold', lineHeight: 1 }}>●</span>
           </Tooltip>
@@ -2266,12 +2275,12 @@ export default function Sites() {
             </Form.Item>
             <Form.Item
               name="apiKey"
-              label={<span style={{ fontSize: 15, fontWeight: 500 }}>API 密钥/系统访问令牌</span>}
+              label={<span style={{ fontSize: 15, fontWeight: 500 }}>API 密钥</span>}
               rules={[{ required: !editMode, message: '请输入API密钥' }]}
               extra={editMode ? '留空表示不修改密钥' : ''}
             >
               <Input.Password
-                placeholder={editMode ? '留空表示不修改密钥' : '请输入Bearer Token或系统访问令牌'}
+                placeholder={editMode ? '留空表示不修改密钥' : '请输入 API 密钥'}
                 style={{ borderRadius: 8, fontSize: 15 }}
               />
             </Form.Item>
@@ -2282,7 +2291,6 @@ export default function Sites() {
               {({ getFieldValue }) => {
                 const apiType = getFieldValue('apiType')
                 const needsUserId = apiType === 'newapi' || apiType === 'veloera'
-                const needsJwtToken = apiType === 'voapi'
                 
                 if (needsUserId) {
                   return (
@@ -2294,20 +2302,6 @@ export default function Sites() {
                     >
                       <Input
                         placeholder="例如：1"
-                        style={{ borderRadius: 8, fontSize: 15 }}
-                      />
-                    </Form.Item>
-                  )
-                } else if (needsJwtToken) {
-                  return (
-                    <Form.Item
-                      name="billingAuthValue"
-                      label={<span style={{ fontSize: 15, fontWeight: 500 }}>JWT Token</span>}
-                      rules={[{ required: true, message: '请输入JWT Token' }]}
-                      extra="用于获取VOAPI用量信息的JWT认证令牌"
-                    >
-                      <Input.Password
-                        placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
                         style={{ borderRadius: 8, fontSize: 15 }}
                       />
                     </Form.Item>
@@ -2560,14 +2554,14 @@ export default function Sites() {
               </div>
             </div>
             
-            {/* 签到配置 - Veloera和NewAPI类型显示 */}
+            {/* 签到配置 - Veloera、NewAPI 和 VOAPI 类型显示 */}
             <Form.Item
               noStyle
               shouldUpdate={(prev, curr) => prev.apiType !== curr.apiType}
             >
               {({ getFieldValue }) => {
                 const apiType = getFieldValue('apiType')
-                const showCheckIn = apiType === 'veloera' || apiType === 'newapi'
+                const showCheckIn = apiType === 'veloera' || apiType === 'newapi' || apiType === 'voapi'
                 return showCheckIn ? (
                   <>
                     <Divider style={{ margin: '16px 0' }}>签到配置</Divider>
@@ -2575,7 +2569,7 @@ export default function Sites() {
                       name="enableCheckIn"
                       label={<span style={{ fontSize: 15, fontWeight: 500 }}>启用自动签到</span>}
                       valuePropName="checked"
-                      extra="Veloera和NewAPI类型支持自动签到功能"
+                      extra="Veloera、NewAPI 和 VOAPI 类型支持自动签到功能"
                       initialValue={false}
                     >
                       <Switch

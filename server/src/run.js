@@ -276,7 +276,7 @@ async function fetchModelsDonehub(baseUrl, apiKey, fastify, site) {
 }
 
 // VOAPI API：获取用户信息（billing）
-async function fetchUserInfoVoapi(baseUrl, jwtToken, fastify, site) {
+async function fetchUserInfoVoapi(baseUrl, apiKey, fastify, site) {
   const url = new URL('api/user/info', baseUrl.endsWith('/') ? baseUrl : baseUrl + '/');
   const ac = new AbortController();
   const timeout = setTimeout(() => ac.abort(), 10000);
@@ -286,7 +286,7 @@ async function fetchUserInfoVoapi(baseUrl, jwtToken, fastify, site) {
     const res = await siteFetch(site, url, {
       method: 'GET',
       headers: {
-        'Authorization': jwtToken, // VOAPI直接使用JWT token
+        'Authorization': apiKey, // VOAPI直接使用API key
         'Content-Type': 'application/json',
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
         'Accept': 'application/json'
@@ -621,6 +621,99 @@ async function fetchModels(baseUrl, apiKey, fastify, site) {
   }
 }
 
+async function fetchModelsVoapi(baseUrl, apiKey, fastify, site) {
+  const url = new URL('api/models', baseUrl.endsWith('/') ? baseUrl : baseUrl + '/');
+  const ac = new AbortController();
+  const timeout = setTimeout(() => ac.abort(), 15000);
+  const startTime = Date.now();
+
+  try {
+    fastify?.log?.info({ msg: 'Fetching VOAPI models with raw Authorization', url: url.toString() });
+
+    const res = await siteFetch(site, url, {
+      method: 'GET',
+      headers: {
+        'Authorization': apiKey,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json, text/plain, */*'
+      },
+      signal: ac.signal
+    });
+
+    const responseTime = Date.now() - startTime;
+    const rawText = await res.text();
+
+    let json;
+    try {
+      json = JSON.parse(rawText);
+    } catch (e) {
+      throw new Error(`Invalid JSON response: ${rawText.substring(0, 200)}`);
+    }
+
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}: ${rawText.substring(0, 200)}`);
+    }
+
+    if (json.code !== 0 || !json.data) {
+      throw new Error(json.msg || json.message || 'Invalid VOAPI models response');
+    }
+
+    const rawModels = Array.isArray(json.data.models)
+      ? json.data.models
+      : Array.isArray(json.data)
+        ? json.data
+        : [];
+
+    const models = rawModels.map((model) => {
+      const created = Number(model.created);
+      const createdAt = Number.isFinite(created)
+        ? (created > 1e12 ? Math.floor(created / 1000) : created)
+        : Math.floor(Date.now() / 1000);
+
+      return {
+        id: model.idKey || model.model || model.id,
+        object: 'model',
+        owned_by: model.firmIdKey || model.firm || model.provider || 'voapi',
+        created: createdAt,
+        chargingType: model.chargingType,
+        inputPrice: model.inputPrice,
+        outputPrice: model.outputPrice,
+        singlePrice: model.singlePrice,
+        ac: Array.isArray(model.ac) ? model.ac : []
+      };
+    }).filter(model => model.id);
+
+    return {
+      models,
+      rawResponse: rawText,
+      statusCode: res.status,
+      responseTime,
+      errorMessage: null
+    };
+  } catch (error) {
+    const responseTime = Date.now() - startTime;
+
+    fastify?.log?.error({
+      msg: 'VOAPI fetch error details',
+      url: url.toString(),
+      errorName: error.name,
+      errorMessage: error.message,
+      errorStack: error.stack?.split('\n')[0],
+      responseTime
+    });
+
+    throw {
+      error,
+      rawResponse: null,
+      statusCode: null,
+      responseTime,
+      errorMessage: error.message
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function checkSiteById(siteId, fastify, options = {}) {
   const site = await prisma.site.findUnique({ where: { id: siteId } });
   if (!site) throw new Error('Site not found');
@@ -752,18 +845,13 @@ async function checkSite(site, fastify, options = {}) {
     }
     fetchModelsFunc = () => fetchModelsDonehub(site.baseUrl, apiKey, fastify, site);
   } else if (site.apiType === 'voapi') {
-    // VOAPI：使用JWT token获取用量，apiKey获取模型
+    // VOAPI：全部请求统一使用 apiKey 原样鉴权
     if (!site.unlimitedQuota) {
-      const jwtToken = site.billingAuthValue ? decrypt(site.billingAuthValue) : null;
-      if (jwtToken) {
-        billingPromises = Promise.allSettled([
-          fetchUserInfoVoapi(site.baseUrl, jwtToken, fastify, site)
-        ]);
-      } else {
-        console.log(`[VOAPI-WARN] No JWT token configured for billing`);
-      }
+      billingPromises = Promise.allSettled([
+        fetchUserInfoVoapi(site.baseUrl, apiKey, fastify, site)
+      ]);
     }
-    fetchModelsFunc = () => fetchModels(site.baseUrl, apiKey, fastify, site); // 使用标准OpenAI模式获取模型
+    fetchModelsFunc = () => fetchModelsVoapi(site.baseUrl, apiKey, fastify, site);
   } else {
     // Other: 使用原有的OpenAI兼容方式或自定义billing
     if (!site.unlimitedQuota) {

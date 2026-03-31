@@ -164,6 +164,10 @@ function serializeManagedTokenPayload(tokenData) {
   };
 }
 
+function getVoapiApiKey(site) {
+  return site?.apiKeyEnc ? decrypt(site.apiKeyEnc) : null;
+}
+
 function getSiteDetailResponse(site, fastify) {
   const token = decryptOptional(site.apiKeyEnc, 'API key', fastify);
   const billingAuthValue = decryptOptional(site.billingAuthValue, 'billing auth value', fastify);
@@ -772,10 +776,10 @@ async function routes(fastify) {
           'Content-Type': 'application/json'
         };
       } else if (site.apiType === 'voapi') {
-        token = site.billingAuthValue ? decrypt(site.billingAuthValue) : null;
+        token = site.apiKeyEnc ? decrypt(site.apiKeyEnc) : null;
         if (!token) {
           reply.code(400);
-          return { error: '站点未配置JWT令牌' };
+          return { error: '站点未配置VOAPI API密钥' };
         }
         url = `${baseUrl}/api/models`;
         headers = {
@@ -864,16 +868,16 @@ async function routes(fastify) {
       let url, headers;
       
       if (site.apiType === 'voapi') {
-        // VOAPI使用JWT令牌和/api/keys端点
-        const voapiToken = site.billingAuthValue ? decrypt(site.billingAuthValue) : null;
-        if (!voapiToken) {
+        // VOAPI 使用 API key 和 /api/keys 端点
+        const voapiKey = getVoapiApiKey(site);
+        if (!voapiKey) {
           reply.code(400);
-          return { error: 'VOAPI站点未配置JWT令牌' };
+          return { error: 'VOAPI站点未配置API密钥' };
         }
         
         url = `${baseUrl}/api/keys`;
         headers = {
-          'Authorization': voapiToken,
+          'Authorization': voapiKey,
           'Content-Type': 'application/json'
         };
         
@@ -907,34 +911,34 @@ async function routes(fastify) {
         };
       } else {
         // newapi, veloera, donehub 使用原有逻辑
-      const token = site.apiKeyEnc ? decrypt(site.apiKeyEnc) : null;
-      if (!token) {
-        reply.code(400);
-        return { error: '站点未配置API令牌' };
-      }
-      
+        const token = site.apiKeyEnc ? decrypt(site.apiKeyEnc) : null;
+        if (!token) {
+          reply.code(400);
+          return { error: '站点未配置API令牌' };
+        }
+
         url = `${baseUrl}/api/token/`;
         headers = {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json'
-      };
-        
-      if (site.userId) {
-        if (site.apiType === 'newapi') {
-          headers['New-Api-User'] = site.userId;
-        } else if (site.apiType === 'veloera') {
-          headers['Veloera-User'] = site.userId;
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        };
+
+        if (site.userId) {
+          if (site.apiType === 'newapi') {
+            headers['New-Api-User'] = site.userId;
+          } else if (site.apiType === 'veloera') {
+            headers['Veloera-User'] = site.userId;
+          }
         }
-      }
-      
-      const res = await siteFetch(site, url, { headers });
-      const data = await res.json();
-      
-      if (!res.ok) {
-        throw new Error(data.message || '获取令牌列表失败');
-      }
-      
-      return normalizeManagedTokenResponse(data);
+
+        const res = await siteFetch(site, url, { headers });
+        const data = await res.json();
+
+        if (!res.ok) {
+          throw new Error(data.message || '获取令牌列表失败');
+        }
+
+        return normalizeManagedTokenResponse(data);
       }
     } catch (e) {
       fastify.log.error({ error: e.message, siteId: id }, 'Error fetching tokens');
@@ -958,32 +962,48 @@ async function routes(fastify) {
         return { error: '站点不存在' };
       }
       
-      const token = site.apiKeyEnc ? decrypt(site.apiKeyEnc) : null;
-      if (!token) {
-        reply.code(400);
-        return { error: '站点未配置API令牌' };
-      }
-      
       const baseUrl = site.baseUrl.replace(/\/$/, '');
       let url = '';
-      if (site.apiType === 'donehub') {
-        url = `${baseUrl}/api/user_group_map`;
-      } else {
-        url = `${baseUrl}/api/user/self/groups`;
-      }
-      
-      const headers = {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json'
-      };
-      if (site.userId) {
-        // 不同站点类型使用不同的用户ID请求头
-        if (site.apiType === 'newapi') {
-          headers['New-Api-User'] = site.userId;
-        } else if (site.apiType === 'veloera') {
-          headers['Veloera-User'] = site.userId;
+      let headers;
+
+      if (site.apiType === 'voapi') {
+        const voapiKey = getVoapiApiKey(site);
+        if (!voapiKey) {
+          reply.code(400);
+          return { error: 'VOAPI站点未配置API密钥' };
         }
-        // 其他类型不需要用户ID请求头
+
+        url = `${baseUrl}/api/models`;
+        headers = {
+          'Authorization': voapiKey,
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        };
+      } else {
+        const token = site.apiKeyEnc ? decrypt(site.apiKeyEnc) : null;
+        if (!token) {
+          reply.code(400);
+          return { error: '站点未配置API令牌' };
+        }
+
+        if (site.apiType === 'donehub') {
+          url = `${baseUrl}/api/user_group_map`;
+        } else {
+          url = `${baseUrl}/api/user/self/groups`;
+        }
+        
+        headers = {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        };
+        if (site.userId) {
+          // 不同站点类型使用不同的用户ID请求头
+          if (site.apiType === 'newapi') {
+            headers['New-Api-User'] = site.userId;
+          } else if (site.apiType === 'veloera') {
+            headers['Veloera-User'] = site.userId;
+          }
+        }
       }
       
       const res = await siteFetch(site, url, { headers });
@@ -992,7 +1012,27 @@ async function routes(fastify) {
       if (!res.ok) {
         throw new Error(data.message || '获取分组列表失败');
       }
-      
+
+      if (site.apiType === 'voapi') {
+        if (data.code !== 0 || !data.data) {
+          throw new Error(data.message || '获取分组列表失败');
+        }
+
+        const groups = data.data.groups || [];
+        const normalizedGroups = {};
+        for (const group of groups) {
+          normalizedGroups[String(group.id)] = {
+            name: group.name || `分组${group.id}`,
+            desc: group.name || `分组${group.id}`
+          };
+        }
+
+        return {
+          success: true,
+          data: normalizedGroups
+        };
+      }
+
       return data;
     } catch (e) {
       fastify.log.error({ error: e.message, siteId: id }, 'Error fetching groups');
@@ -1028,16 +1068,16 @@ async function routes(fastify) {
       let url, headers, payload;
       
       if (site.apiType === 'voapi') {
-        // VOAPI 使用系统访问令牌（billingAuthValue）
-        const voapiToken = site.billingAuthValue ? decrypt(site.billingAuthValue) : null;
-        if (!voapiToken) {
+        // VOAPI 使用 API key
+        const voapiKey = getVoapiApiKey(site);
+        if (!voapiKey) {
           reply.code(400);
-          return { error: 'VOAPI站点未配置系统访问令牌（JWT令牌）' };
+          return { error: 'VOAPI站点未配置API密钥' };
         }
         
         url = `${baseUrl}/api/keys`;
         headers = {
-          'Authorization': voapiToken,
+          'Authorization': voapiKey,
           'Content-Type': 'application/json'
         };
         
@@ -1150,16 +1190,16 @@ async function routes(fastify) {
       let url, headers, payload;
       
       if (site.apiType === 'voapi') {
-        // VOAPI使用JWT令牌和/api/keys/:id端点
-        const voapiToken = site.billingAuthValue ? decrypt(site.billingAuthValue) : null;
-        if (!voapiToken) {
+        // VOAPI 使用 API key 和 /api/keys/:id 端点
+        const voapiKey = getVoapiApiKey(site);
+        if (!voapiKey) {
           reply.code(400);
-          return { error: 'VOAPI站点未配置JWT令牌' };
+          return { error: 'VOAPI站点未配置API密钥' };
         }
         
         url = `${baseUrl}/api/keys/${tokenData.id}`;
         headers = {
-          'Authorization': voapiToken,
+          'Authorization': voapiKey,
           'Content-Type': 'application/json'
         };
         
@@ -1248,38 +1288,38 @@ async function routes(fastify) {
       let url, headers;
       
       if (site.apiType === 'voapi') {
-        // VOAPI使用JWT令牌和/api/keys/:id端点
-        const voapiToken = site.billingAuthValue ? decrypt(site.billingAuthValue) : null;
-        if (!voapiToken) {
+        // VOAPI 使用 API key 和 /api/keys/:id 端点
+        const voapiKey = getVoapiApiKey(site);
+        if (!voapiKey) {
           reply.code(400);
-          return { error: 'VOAPI站点未配置JWT令牌' };
+          return { error: 'VOAPI站点未配置API密钥' };
         }
         
         url = `${baseUrl}/api/keys/${tokenId}`;
         headers = {
-          'Authorization': voapiToken,
+          'Authorization': voapiKey,
           'Content-Type': 'application/json'
         };
       } else {
         // newapi, veloera, donehub 使用原有逻辑
-      const token = site.apiKeyEnc ? decrypt(site.apiKeyEnc) : null;
-      if (!token) {
-        reply.code(400);
-        return { error: '站点未配置API令牌' };
-      }
-      
+        const token = site.apiKeyEnc ? decrypt(site.apiKeyEnc) : null;
+        if (!token) {
+          reply.code(400);
+          return { error: '站点未配置API令牌' };
+        }
+
         url = `${baseUrl}/api/token/${tokenId}`;
         headers = {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json'
-      };
-        
-      if (site.userId) {
-        if (site.apiType === 'newapi') {
-          headers['New-Api-User'] = site.userId;
-        } else if (site.apiType === 'veloera') {
-          headers['Veloera-User'] = site.userId;
-        }
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        };
+
+        if (site.userId) {
+          if (site.apiType === 'newapi') {
+            headers['New-Api-User'] = site.userId;
+          } else if (site.apiType === 'veloera') {
+            headers['Veloera-User'] = site.userId;
+          }
         }
       }
       
@@ -1336,10 +1376,15 @@ async function routes(fastify) {
       const baseUrl = site.baseUrl.replace(/\/$/, '');
       const url = `${baseUrl}/api/user/topup`;
       
-      const headers = {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json'
-      };
+      const headers = site.apiType === 'voapi'
+        ? {
+            'Authorization': token,
+            'Content-Type': 'application/json'
+          }
+        : {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          };
       if (site.userId) {
         if (site.apiType === 'newapi') {
           headers['New-Api-User'] = site.userId;
